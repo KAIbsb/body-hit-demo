@@ -17,7 +17,7 @@ git lfs pull
 
 Git 仓库不含生成的 Binaries。克隆后安装 UE 5.8.3 和 Visual Studio 2022 C++ 游戏开发组件，切换本机引擎版本，生成 Visual Studio 项目文件并构建 `InjuryLabEditor / Development Editor / Win64`。
 
-私有仓库需拥有者在 Settings → Collaborators → Add people 邀请 GitHub 账号，对方接受后才能下载。请下载 Releases 中带中文名称的工程包；GitHub 自动生成的 Source code ZIP 默认可能只含 LFS 指针。
+仓库现已公开，其他人无需登录或接受邀请即可下载。请下载 Releases 中带中文名称的完整工程包；GitHub 自动生成的 Source code ZIP 默认可能只含 LFS 指针。v0.1.0 工程包内关于私有仓库权限的文字为发布时说明，当前直接使用下载链接即可。
 
 ## 演示按键
 
