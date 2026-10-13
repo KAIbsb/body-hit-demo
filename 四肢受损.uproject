@@ -1,0 +1,23 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "{27764B69-433E-ADEA-DD35-64B040FC07CC}",
+	"Category": "",
+	"Description": "",
+	"Modules": [
+		{ "Name": "InjuryLab", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "InjuryLabEditor", "Type": "Editor", "LoadingPhase": "Default" }
+	],
+	"Plugins": [
+		{
+			"Name": "ModelingToolsEditorMode",
+			"Enabled": true,
+			"TargetAllowList": [
+				"Editor"
+			]
+		},
+		{
+			"Name": "GameplayStateTree",
+			"Enabled": true
+		}
+	]
+}

@@ -1,0 +1,14 @@
+/Binaries/
+/DerivedDataCache/
+/Intermediate/
+/Saved/
+/.vs/
+/Releases/
+*.sln
+*.suo
+*.VC.db
+*.pdb
+*.obj
+*.exe
+__pycache__/
+*.pyc
