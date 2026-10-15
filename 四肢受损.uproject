@@ -1,11 +1,19 @@
 {
 	"FileVersion": 3,
-	"EngineAssociation": "{27764B69-433E-ADEA-DD35-64B040FC07CC}",
+	"EngineAssociation": "5.8",
 	"Category": "",
 	"Description": "",
 	"Modules": [
-		{ "Name": "InjuryLab", "Type": "Runtime", "LoadingPhase": "Default" },
-		{ "Name": "InjuryLabEditor", "Type": "Editor", "LoadingPhase": "Default" }
+		{
+			"Name": "InjuryLab",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "InjuryLabEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
 	],
 	"Plugins": [
 		{
@@ -17,6 +25,14 @@
 		},
 		{
 			"Name": "GameplayStateTree",
+			"Enabled": true
+		},
+		{
+			"Name": "ModelContextProtocol",
+			"Enabled": true
+		},
+		{
+			"Name": "AllToolsets",
 			"Enabled": true
 		}
 	]
