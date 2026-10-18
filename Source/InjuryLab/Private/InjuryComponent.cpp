@@ -76,6 +76,11 @@ FInjuryRegionStates UInjuryComponent::GetRegionStates() const
 }
 bool UInjuryComponent::ApplyDamageToPart(EInjuryRegion Part, float DamageAmount)
 {
+    if (Part==EInjuryRegion::Head)
+    {
+        if (IsDead() || !FMath::IsFinite(DamageAmount) || DamageAmount<0) return false;
+        const auto Old=State; State.Damage(DamageAmount); PublishChanges(Old); return true;
+    }
     EInjuryBodyPart Detail=EInjuryBodyPart::Unknown;
     switch (Part)
     {
@@ -84,10 +89,15 @@ bool UInjuryComponent::ApplyDamageToPart(EInjuryRegion Part, float DamageAmount)
         case EInjuryRegion::RightArm: Detail=EInjuryBodyPart::RightUpperArm; break;
         case EInjuryRegion::LeftLeg: Detail=EInjuryBodyPart::LeftThigh; break;
         case EInjuryRegion::RightLeg: Detail=EInjuryBodyPart::RightThigh; break;
-        default: return false; // 头部只能经道具入口触发致盲。
+        default: return false; // 未知部位不接受伤害。
     }
     return ApplyPartDamage(Detail,DamageAmount);
 }
+EInjuryRegion UInjuryComponent::ApplyExternalHit(const FHitResult& Hit)
+{
+    return ResolveRegion(Hit.BoneName);
+}
+
 bool UInjuryComponent::ApplyPartDamage(EInjuryBodyPart Part, float Amount)
 {
     const auto P=static_cast<InjuryRules::Part>(Part);

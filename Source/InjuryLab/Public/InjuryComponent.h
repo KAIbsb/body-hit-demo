@@ -51,7 +51,7 @@ class INJURYLAB_API UInjuryComponent : public UActorComponent
     GENERATED_BODY()
 public:
     UInjuryComponent();
-    // 所有可调数值均可由蓝图/组件详情编辑。头部不接受受伤入口。
+    // 所有可调数值均可由蓝图/组件详情编辑。头部外部命中可扣血，但不建立普通伤口。
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Tuning", meta=(ClampMin="1")) float MaximumHealth = 100;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Tuning", meta=(ClampMin="0")) float ArmBulletDamage = 0;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Tuning", meta=(ClampMin="0")) float LegBulletDamage = 0;
@@ -89,6 +89,7 @@ public:
     UPROPERTY(BlueprintAssignable, Category="Injury|Events") FInjuryGameplayModifierEvent OnGameplayModifiersChanged;
 
     UFUNCTION(BlueprintCallable, Category="Injury|Hit") bool ApplyDamageToPart(EInjuryRegion Part, float DamageAmount = 0);
+    UFUNCTION(BlueprintCallable, Category="Injury|Hit") EInjuryRegion ApplyExternalHit(const FHitResult& Hit);
     UFUNCTION(BlueprintPure, Category="Injury|State") FInjuryRegionStates GetRegionStates() const;
     UFUNCTION(BlueprintPure, Category="Injury|State") bool IsRegionInjured(EInjuryRegion Region) const;
     UFUNCTION(BlueprintPure, Category="Injury|Hit") EInjuryRegion ResolveRegion(FName BoneName) const;
