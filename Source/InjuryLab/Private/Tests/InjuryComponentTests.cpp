@@ -2,17 +2,14 @@
 #include "Misc/AutomationTest.h"
 #include "InjuryComponent.h"
 #include "InjuryLabCharacter.h"
-#include "InjuryLabPlayerController.h"
 #include "InjuryLabWidget.h"
 #include "Engine/World.h"
 #include "Engine/Engine.h"
 #include "TimerManager.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
-#include "Components/ComboBoxString.h"
+#include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
-#include "Components/Button.h"
-#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/WorldSettings.h"
 #include "Kismet/GameplayStatics.h"
 #include "InjuryEventProbe.h"
@@ -58,14 +55,13 @@ struct FInjuryTestWorld
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInjuryHealthTest,"InjuryLab.Backend.HealthAndBones",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FInjuryHealthTest::RunTest(const FString&)
 {
-    FInjuryTestWorld Test; auto* C=Test.Component();
+    FInjuryTestWorld Test; auto* C=Test.Component(); C->PartMaxHealth=10.f;
     TestEqual(TEXT("initial health"),C->GetHealth(),100.f);
-    TestFalse(TEXT("head bullet rejects injury"),C->ApplyBulletHit(EInjuryBodyPart::Head));
-    TestFalse(TEXT("head region rejects damage"),C->ApplyDamageToPart(EInjuryRegion::Head,80));
-    TestEqual(TEXT("head does not alter health"),C->GetHealth(),100.f);
+    TestTrue(TEXT("head region accepts damage"),C->ApplyDamageToPart(EInjuryRegion::Head,80));
+    TestEqual(TEXT("head damage lowers health"),C->GetHealth(),20.f);
     TestFalse(TEXT("head has no wound"),C->IsRegionInjured(EInjuryRegion::Head));
     C->ResetInjuries();
-    for (int I=1;I<=4;++I) { C->TestDamage25(); TestEqual(TEXT("25 loss tier"),C->GetBloodVisionTier(),I); }
+    for (int I=1;I<=4;++I) { C->ApplyHealthDamage(25); TestEqual(TEXT("25 loss tier"),C->GetBloodVisionTier(),I); }
     C->ResetInjuries();
     TestEqual(TEXT("finger maps hand"),C->ResolveBodyPart(TEXT("index_03_r")),EInjuryBodyPart::RightHand);
     TestEqual(TEXT("thigh twist maps thigh"),C->ResolveBodyPart(TEXT("thigh_twist_01_l")),EInjuryBodyPart::LeftThigh);
@@ -83,6 +79,20 @@ bool FInjuryHealthTest::RunTest(const FString&)
     TestEqual(TEXT("point damage amount routed once"),C->GetHealth(),88.f);
     TestTrue(TEXT("point damage preserves detailed hand state"),C->IsBodyPartInjured(EInjuryBodyPart::RightHand));
     TestTrue(TEXT("six region right arm state"),C->GetRegionStates().bRightArmInjured);
+    C->ResetInjuries();
+    FHitResult ExternalHit; ExternalHit.BoneName=TEXT("thigh_l");
+    const EInjuryRegion ExternalRegion=C->ApplyExternalHit(ExternalHit);
+    TestEqual(TEXT("external hit region"),ExternalRegion,EInjuryRegion::LeftLeg);
+    TestTrue(TEXT("external hit only resolves region"),FMath::IsNearlyEqual(C->GetHealth(),100.0f));
+    C->ApplyDamageToPart(ExternalRegion,12.0f);
+    TestTrue(TEXT("regional damage applies exact amount"),FMath::IsNearlyEqual(C->GetHealth(),88.0f));
+    C->ResetInjuries();
+    ExternalHit.BoneName=TEXT("head");
+    const EInjuryRegion HeadRegion=C->ApplyExternalHit(ExternalHit);
+    TestEqual(TEXT("external head region"),HeadRegion,EInjuryRegion::Head);
+    C->ApplyDamageToPart(HeadRegion,10.0f);
+    TestTrue(TEXT("head damage applies exact amount"),FMath::IsNearlyEqual(C->GetHealth(),90.0f));
+    TestFalse(TEXT("head remains without wound state"),C->IsBodyPartInjured(EInjuryBodyPart::Head));
     TestFalse(TEXT("negative regional damage rejected"),C->ApplyDamageToPart(EInjuryRegion::LeftArm,-1));
     C->MaximumHealth=200; C->ResetInjuries(); C->ApplyDamageToPart(EInjuryRegion::LeftLeg,50);
     TestEqual(TEXT("maximum health adjustable"),C->GetMaxHealth(),200.f);
@@ -93,12 +103,12 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInjuryTimerTest,"InjuryLab.Backend.TimersAndRe
 bool FInjuryTimerTest::RunTest(const FString&)
 {
     FInjuryTestWorld Test; auto* C=Test.Component();
-    C->ApplyBulletHit(EInjuryBodyPart::Torso);
-    TestEqual(TEXT("no immediate bleed"),C->GetHealth(),100.f);
-    Test.Advance(0.25f); C->ApplyBulletHit(EInjuryBodyPart::Torso);
+    C->ApplyDamageToPart(EInjuryRegion::Torso,21);
+    TestEqual(TEXT("threshold hit applies damage once"),C->GetHealth(),79.f);
+    Test.Advance(0.25f); C->ApplyDamageToPart(EInjuryRegion::Torso,0);
     Test.Advance(0.26f);
-    TestEqual(TEXT("repeat hit does not postpone or stack bleed"),C->GetHealth(),99.f);
-    Test.Advance(0.5f); TestEqual(TEXT("second half second bleed tick"),C->GetHealth(),98.f);
+    TestEqual(TEXT("repeat hit does not postpone or stack bleed"),C->GetHealth(),78.f);
+    Test.Advance(0.5f); TestEqual(TEXT("second half second bleed tick"),C->GetHealth(),77.f);
     C->ConfigureBleeding(0.1f,50,10); Test.Advance(0.31f);
     TestEqual(TEXT("configured bleed floor prevents death"),C->GetHealth(),10.f);
     TestTrue(TEXT("bleeding persists until treated"),C->IsBleeding());
@@ -111,57 +121,61 @@ bool FInjuryTimerTest::RunTest(const FString&)
     C->FlashDurationSeconds=0.5f; C->TriggerFlashForTest(); TestTrue(TEXT("flash starts"),C->IsFlashed());
     TestFalse(TEXT("flash is not bullet wound"),C->IsBodyPartInjured(EInjuryBodyPart::Head));
     Test.Advance(0.6f); TestFalse(TEXT("flash expires"),C->IsFlashed());
-    C->ApplyBulletHit(EInjuryBodyPart::Torso); C->ApplyHealthDamage(100);
+    C->ApplyDamageToPart(EInjuryRegion::Torso,21); C->ApplyHealthDamage(100);
     Test.Advance(2.f); TestEqual(TEXT("dead clamps at zero"),C->GetHealth(),0.f);
     TestFalse(TEXT("dead stops bleeding"),C->IsBleeding());
     C->ResetInjuries(); C->TriggerFlashForTest(); C->DestroyComponent();
     TestFalse(TEXT("component destruction ends active flash"),C->IsFlashed());
     return true;
 }
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInjuryUITest,"InjuryLab.Integration.EditableHUD",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInjuryUITest,"InjuryLab.Integration.HudBinding",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FInjuryUITest::RunTest(const FString&)
 {
     FInjuryTestWorld Test;
-    auto* PC=Test.World->SpawnActor<AInjuryLabPlayerController>();
-    auto* Character=Test.World->SpawnActor<AInjuryLabCharacter>(); PC->Possess(Character);
+    auto* Character=Test.World->SpawnActor<AInjuryLabCharacter>();
     const auto Class=LoadClass<UInjuryLabWidget>(nullptr,TEXT("/Game/InjuryLab/UI/WBP_InjuryHUD.WBP_InjuryHUD_C"));
     if (!TestNotNull(TEXT("designer HUD asset"),Class)) return false;
     auto* UI=CreateWidget<UInjuryLabWidget>(Test.World,Class);
     if (!TestNotNull(TEXT("HUD instance"),UI)) return false;
     UI->TakeWidget(); UI->SetInjuryComponent(Character->Injury);
-    TestNotNull(TEXT("five experiment buttons"),UI->WidgetTree->FindWidget<UButton>(TEXT("LegButton")));
-    UI->WidgetTree->FindWidget<UButton>(TEXT("HeadButton"))->OnClicked.Broadcast(); TestEqual(TEXT("head button routes stun"),Character->Injury->GetHeadState(),EInjuryHeadState::StunGrenade);
+    Character->Injury->PartMaxHealth=10.f; Character->Injury->ResetInjuries();
+    auto* HP=UI->WidgetTree->FindWidget<UTextBlock>(TEXT("HealthText"));
+    auto* Bar=UI->WidgetTree->FindWidget<UProgressBar>(TEXT("HealthBar"));
+    auto* PartBar=UI->WidgetTree->FindWidget<UProgressBar>(TEXT("ProgressBar_Part_Torso"));
+    auto* Torso=UI->WidgetTree->FindWidget<UBorder>(TEXT("Part_Torso"));
     auto* Head=UI->WidgetTree->FindWidget<UBorder>(TEXT("Part_Head"));
-    TestTrue(TEXT("head indicator remains gray"),Head && Head->GetBrushColor().R<0.8f);
-    TestEqual(TEXT("head action does not damage HP"),Character->Injury->GetHealth(),100.f);
-    UI->WidgetTree->FindWidget<UButton>(TEXT("ResetButton"))->OnClicked.Broadcast(); UI->WidgetTree->FindWidget<UButton>(TEXT("ArmButton"))->OnClicked.Broadcast();
-    TestTrue(TEXT("arm UI routes injury"),Character->Injury->IsBodyPartInjured(EInjuryBodyPart::LeftUpperArm));
-    UI->RunExperiment(6);
-    Character->GetCharacterMovement()->MaxWalkSpeed=420.f;
-    UI->WidgetTree->FindWidget<UButton>(TEXT("LegButton"))->OnClicked.Broadcast();
-    TestTrue(TEXT("leg button routes left leg"),Character->Injury->IsRegionInjured(EInjuryRegion::LeftLeg));
-    TestEqual(TEXT("leg injury retains movement interface multiplier"),Character->Injury->GetMoveSpeedMultiplier(),0.6f);
-    TestEqual(TEXT("leg injury does not apply movement effect"),Character->GetCharacterMovement()->MaxWalkSpeed,420.f);
-    UI->RunExperiment(6); TestEqual(TEXT("reset does not overwrite external movement speed"),Character->GetCharacterMovement()->MaxWalkSpeed,420.f);
-    UI->WidgetTree->FindWidget<UButton>(TEXT("FlashButton"))->OnClicked.Broadcast(); TestTrue(TEXT("flash UI routes request"),Character->Injury->IsFlashed());
-    UI->RunExperiment(6); UI->WidgetTree->FindWidget<UButton>(TEXT("TorsoButton"))->OnClicked.Broadcast(); Test.Advance(1.01f);
-    TestEqual(TEXT("torso UI routes timer"),Character->Injury->GetHealth(),98.f);
-    UI->RunExperiment(6); UI->WidgetTree->FindWidget<UButton>(TEXT("Damage25Button"))->OnClicked.Broadcast(); TestEqual(TEXT("25 button routes tier"),Character->Injury->GetBloodVisionTier(),1);
+    if (!TestNotNull(TEXT("health text"),HP) || !TestNotNull(TEXT("health bar"),Bar) || !TestNotNull(TEXT("part bar"),PartBar) || !TestNotNull(TEXT("torso block"),Torso) || !TestNotNull(TEXT("head block"),Head)) return false;
+    TestTrue(TEXT("healthy text"),HP->GetText().ToString().Contains(TEXT("100")));
+    TestEqual(TEXT("healthy bar"),Bar->GetPercent(),1.f);
+    TestEqual(TEXT("healthy part bar"),PartBar->GetPercent(),1.f);
+    TestTrue(TEXT("healthy part color is teal"),PartBar->GetFillColorAndOpacity().G>0.5f && PartBar->GetFillColorAndOpacity().B>0.5f);
+    TestTrue(TEXT("healthy border neutral"),Torso->GetBrushColor().R<0.8f);
+    TestTrue(TEXT("head remains neutral"),Head->GetBrushColor().R<0.8f);
+    Character->Injury->ApplyDamageToPart(EInjuryRegion::Torso,7);
     UI->RefreshDisplay();
-    const auto* HP=UI->WidgetTree->FindWidget<UTextBlock>(TEXT("HealthText"));
-    TestTrue(TEXT("health text reads new state"),HP && HP->GetText().ToString().Contains(TEXT("75")));
+    TestTrue(TEXT("threshold text"),HP->GetText().ToString().Contains(TEXT("93")));
+    TestTrue(TEXT("threshold global bar"),FMath::IsNearlyEqual(Bar->GetPercent(),0.93f));
+    TestTrue(TEXT("threshold part bar"),FMath::IsNearlyEqual(PartBar->GetPercent(),0.3f));
+    TestTrue(TEXT("threshold part turns red"),PartBar->GetFillColorAndOpacity().R>0.8f);
+    TestTrue(TEXT("threshold border stays neutral"),Torso->GetBrushColor().R<0.8f);
+    TestEqual(TEXT("threshold bar stays visible"),PartBar->GetVisibility(),ESlateVisibility::Visible);
+    Character->Injury->ApplyDamageToPart(EInjuryRegion::Torso,3);
+    UI->RefreshDisplay();
+    TestTrue(TEXT("damage text"),HP->GetText().ToString().Contains(TEXT("90")));
+    TestTrue(TEXT("damage bar"),FMath::IsNearlyEqual(Bar->GetPercent(),0.9f));
+    TestEqual(TEXT("torso part bar empties"),PartBar->GetPercent(),0.f);
+    TestEqual(TEXT("empty bar hidden"),PartBar->GetVisibility(),ESlateVisibility::Hidden);
+    TestTrue(TEXT("empty part border turns red"),Torso->GetBrushColor().R>0.8f);
+    Character->Injury->ResetInjuries(); UI->RefreshDisplay();
+    TestTrue(TEXT("reset text"),HP->GetText().ToString().Contains(TEXT("100")));
+    TestTrue(TEXT("reset bar"),FMath::IsNearlyEqual(Bar->GetPercent(),1.f));
+    TestEqual(TEXT("reset part bar"),PartBar->GetPercent(),1.f);
+    TestEqual(TEXT("reset bar visible"),PartBar->GetVisibility(),ESlateVisibility::Visible);
+    TestTrue(TEXT("reset part color"),PartBar->GetFillColorAndOpacity().G>0.5f && PartBar->GetFillColorAndOpacity().B>0.5f);
+    TestTrue(TEXT("reset border neutral"),Torso->GetBrushColor().R<0.8f);
     auto* HealthPanel=UI->WidgetTree->FindWidget(TEXT("HealthPanel"));
-    auto* HealthSlot=Cast<UCanvasPanelSlot>(HealthPanel->GetParent()->Slot);
+    auto* HealthSlot=HealthPanel ? Cast<UCanvasPanelSlot>(HealthPanel->GetParent()->Slot) : nullptr;
     TestTrue(TEXT("health UI anchored top left"),HealthSlot && HealthSlot->GetAnchors().Minimum==FVector2D::ZeroVector);
-    TestEqual(TEXT("old tier hidden"),UI->WidgetTree->FindWidget(TEXT("TierText"))->GetVisibility(),ESlateVisibility::Collapsed);
-    TestEqual(TEXT("recovery panel hidden"),UI->WidgetTree->FindWidget(TEXT("RecoveryPanel"))->GetParent()->GetVisibility(),ESlateVisibility::Collapsed);
-    PC->DebugReset(); PC->DebugFlash(); TestEqual(TEXT("key 1 entry"),Character->Injury->GetHeadState(),EInjuryHeadState::Flashbang);
-    PC->DebugTorso(); PC->DebugLeftArm(); PC->DebugRightArm(); PC->DebugLeftLeg(); PC->DebugRightLeg();
-    const auto Regions=Character->Injury->GetRegionStates();
-    TestTrue(TEXT("keys 2 through 6 independently injure five regions"),Regions.bTorsoInjured && Regions.bLeftArmInjured && Regions.bRightArmInjured && Regions.bLeftLegInjured && Regions.bRightLegInjured);
-    PC->DebugStun(); TestEqual(TEXT("key 7 entry"),Character->Injury->GetHeadState(),EInjuryHeadState::StunGrenade);
-    PC->DebugReset(); TestFalse(TEXT("R entry clears injuries"),Character->Injury->GetRegionStates().bRightLegInjured);
-    TestEqual(TEXT("R clears blindness"),Character->Injury->GetHeadState(),EInjuryHeadState::Normal);
     return true;
 }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInjuryBlindTest,"InjuryLab.Backend.BlindnessInterfaces",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -196,7 +210,7 @@ bool FInjuryBlindTest::RunTest(const FString&)
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInjuryModifierTest,"InjuryLab.Backend.RegionModifiers",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FInjuryModifierTest::RunTest(const FString&)
 {
-    FInjuryTestWorld Test; auto* C=Test.Component(); TStrongObjectPtr<UInjuryEventProbe> Probe(NewObject<UInjuryEventProbe>());
+    FInjuryTestWorld Test; auto* C=Test.Component(); C->PartMaxHealth=10.f; TStrongObjectPtr<UInjuryEventProbe> Probe(NewObject<UInjuryEventProbe>());
     C->OnGameplayModifiersChanged.AddDynamic(Probe.Get(),&UInjuryEventProbe::Modifiers);
     C->OnRegionInjuryChanged.AddDynamic(Probe.Get(),&UInjuryEventProbe::Region);
     C->ApplyDamageToPart(EInjuryRegion::LeftArm,10);
@@ -204,10 +218,10 @@ bool FInjuryModifierTest::RunTest(const FString&)
     TestEqual(TEXT("left arm region event"),Probe->LastRegion,EInjuryRegion::LeftArm);
     TestEqual(TEXT("duration event multiplier"),Probe->ReloadDuration,1.5f);
     TestTrue(TEXT("animation speed reciprocal"),FMath::IsNearlyEqual(Probe->ReloadSpeed,1.f/1.5f));
-    C->ApplyDamageToPart(EInjuryRegion::RightArm,0); TestEqual(TEXT("default dual arms unified"),C->GetReloadDurationMultiplier(),1.5f);
+    C->ApplyDamageToPart(EInjuryRegion::RightArm,10); TestEqual(TEXT("default dual arms unified"),C->GetReloadDurationMultiplier(),1.5f);
     C->ArmStackingPolicy=EInjuryStackingPolicy::StackBothSides; C->ApplyDamageToPart(EInjuryRegion::RightArm,0);
     TestEqual(TEXT("optional dual arm stacking"),C->GetReloadDurationMultiplier(),2.25f);
-    C->ApplyDamageToPart(EInjuryRegion::LeftLeg,0); C->ApplyDamageToPart(EInjuryRegion::RightLeg,0);
+    C->ApplyDamageToPart(EInjuryRegion::LeftLeg,10); C->ApplyDamageToPart(EInjuryRegion::RightLeg,10);
     TestEqual(TEXT("default dual legs unified"),C->GetMoveSpeedMultiplier(),0.6f);
     C->LegStackingPolicy=EInjuryStackingPolicy::StackBothSides; C->ApplyDamageToPart(EInjuryRegion::RightLeg,0);
     TestTrue(TEXT("optional dual leg stacking"),FMath::IsNearlyEqual(Probe->MoveSpeed,0.36f));

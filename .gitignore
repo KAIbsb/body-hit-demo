@@ -17,3 +17,6 @@ __pycache__/
 /AGENTS.md
 /docs/_local/*
 !/docs/_local/README.md
+NUL
+*.slnx
+.vsconfig
