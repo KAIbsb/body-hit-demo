@@ -53,8 +53,10 @@ public:
     UInjuryComponent();
     // 所有可调数值均可由蓝图/组件详情编辑。头部外部命中可扣血，但不建立普通伤口。
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Tuning", meta=(ClampMin="1")) float MaximumHealth = 100;
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Tuning", meta=(ClampMin="0")) float ArmBulletDamage = 0;
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Tuning", meta=(ClampMin="0")) float LegBulletDamage = 0;
+    // 每个部位独立的耐久上限；躯干和四肢使用，头部没有部位耐久。
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Parts", meta=(ClampMin="1")) float PartMaxHealth = 30;
+    // 部位耐久降到该比例时进入受伤状态；0.3 表示 30%。
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Parts", meta=(ClampMin="0", ClampMax="1")) float InjuredThreshold = 0.3f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Bleeding", meta=(ClampMin="0.01")) float BleedIntervalSeconds = 0.5f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Bleeding", meta=(ClampMin="0")) float BleedDamagePerTick = 1;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Bleeding", meta=(ClampMin="1")) float BleedMinimumHealth = 1;
@@ -92,13 +94,14 @@ public:
     UFUNCTION(BlueprintCallable, Category="Injury|Hit") EInjuryRegion ApplyExternalHit(const FHitResult& Hit);
     UFUNCTION(BlueprintPure, Category="Injury|State") FInjuryRegionStates GetRegionStates() const;
     UFUNCTION(BlueprintPure, Category="Injury|State") bool IsRegionInjured(EInjuryRegion Region) const;
+    // 头部没有部位耐久；其他区域返回 0..PartMaxHealth。
+    UFUNCTION(BlueprintPure, Category="Injury|Parts") float GetPartHealth(EInjuryRegion Region) const;
+    UFUNCTION(BlueprintPure, Category="Injury|Parts") float GetPartHealthPercent(EInjuryRegion Region) const;
+    UFUNCTION(BlueprintPure, Category="Injury|Parts") float GetPartMaxHealth(EInjuryRegion Region) const;
     UFUNCTION(BlueprintPure, Category="Injury|Hit") EInjuryRegion ResolveRegion(FName BoneName) const;
 
-    UFUNCTION(BlueprintCallable, Category="Injury|Hit", meta=(ReturnDisplayName="Accepted")) bool ApplyBulletHit(EInjuryBodyPart Part);
-    UFUNCTION(BlueprintCallable, Category="Injury|Hit") bool ApplyBulletHitFromHit(const FHitResult& Hit);
     UFUNCTION(BlueprintPure, Category="Injury|Hit") EInjuryBodyPart ResolveBodyPart(FName BoneName) const;
     UFUNCTION(BlueprintCallable, Category="Injury|Health") void ApplyHealthDamage(float Amount);
-    UFUNCTION(BlueprintCallable, Category="Injury|Health") void TestDamage25();
     UFUNCTION(BlueprintCallable, Category="Injury|Recovery") void ResetInjuries();
     UFUNCTION(BlueprintCallable, Category="Injury|Recovery") void StopBleeding();
     UFUNCTION(BlueprintCallable, Category="Injury|Recovery") void TreatTorso(float HealAmount = 0);
@@ -138,8 +141,15 @@ private:
     EInjuryHeadState HeadState = EInjuryHeadState::Normal;
     float ActiveBleedInterval = 0.5f, ActiveBlindDuration = 0, ActiveBlindOpacity = 0, ActiveEaseExponent = 2;
     UPROPERTY() TObjectPtr<UCurveFloat> ActiveFadeCurve;
+    // 下标 1–6 对应 EInjuryRegion；下标 0 不使用。头部没有部位耐久。
+    float PartHealth[7] = {};
+    static bool HasPartHealth(EInjuryRegion Region);
+    static int32 PartIndex(EInjuryRegion Region);
     static EInjuryRegion ToRegion(EInjuryBodyPart Part);
     bool ApplyPartDamage(EInjuryBodyPart Part, float Amount);
+    bool IsPartInjured(EInjuryRegion Region) const;
+    void DamagePart(EInjuryRegion Region, float Amount);
+    void ResetPartHealth();
     void SyncTuning();
     void PublishChanges(const InjuryRules::State& Old);
     void HandleBleedTick();

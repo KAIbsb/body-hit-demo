@@ -14,7 +14,7 @@ static_assert(static_cast<int>(EInjuryBodyPart::RightFoot)+1==static_cast<int>(I
 UInjuryComponent::UInjuryComponent() { PrimaryComponentTick.bCanEverTick = false; }
 void UInjuryComponent::BeginPlay()
 {
-    Super::BeginPlay(); SyncTuning(); State.Reset();
+    Super::BeginPlay(); SyncTuning(); State.Reset(); ResetPartHealth();
     GetOwner()->OnTakePointDamage.AddDynamic(this, &UInjuryComponent::HandlePointDamage);
 }
 void UInjuryComponent::EndPlay(const EEndPlayReason::Type Reason)
@@ -28,20 +28,17 @@ void UInjuryComponent::SyncTuning()
 {
     auto Safe = [](float Value, float Fallback) { return FMath::IsFinite(Value) ? FMath::Max(0.f, Value) : Fallback; };
     State.MaxHealth=FMath::Max(1.f,Safe(MaximumHealth,100)); State.Health=FMath::Min(State.Health,State.MaxHealth);
-    State.ArmDamage=Safe(ArmBulletDamage,0); State.LegDamage=Safe(LegBulletDamage,0);
     State.BleedPerTick=Safe(BleedDamagePerTick,1);
     State.BleedMinimumHealth=FMath::Clamp(Safe(BleedMinimumHealth,1),1.f,State.MaxHealth);
     State.ArmReloadDuration=FMath::Max(1.f,Safe(InjuredReloadDurationMultiplier,1.5f));
     State.LegMoveSpeed=FMath::Clamp(Safe(InjuredMoveSpeedMultiplier,0.6f),0.f,1.f);
     State.StackArmSides=ArmStackingPolicy==EInjuryStackingPolicy::StackBothSides;
     State.StackLegSides=LegStackingPolicy==EInjuryStackingPolicy::StackBothSides;
+    PartMaxHealth=FMath::Max(1.f,Safe(PartMaxHealth,30));
+    InjuredThreshold=FMath::Clamp(Safe(InjuredThreshold,0.3f),0.f,1.f);
+    for (int I=1;I<=6;++I) PartHealth[I]=FMath::Clamp(PartHealth[I],0.f,PartMaxHealth);
 }
 bool UInjuryComponent::IsBodyPartInjured(EInjuryBodyPart Part) const { return State.IsInjured(static_cast<InjuryRules::Part>(Part)); }
-bool UInjuryComponent::ApplyBulletHit(EInjuryBodyPart Part)
-{
-    const auto P=static_cast<InjuryRules::Part>(Part);
-    return ApplyPartDamage(Part,InjuryRules::State::Arm(P) ? ArmBulletDamage : InjuryRules::State::Leg(P) ? LegBulletDamage : 0);
-}
 EInjuryRegion UInjuryComponent::ToRegion(EInjuryBodyPart Part)
 {
     switch (Part)
@@ -55,6 +52,36 @@ EInjuryRegion UInjuryComponent::ToRegion(EInjuryBodyPart Part)
         default: return EInjuryRegion::Unknown;
     }
 }
+bool UInjuryComponent::HasPartHealth(EInjuryRegion Region)
+{
+    const int32 I=static_cast<int32>(Region);
+    return I>=static_cast<int32>(EInjuryRegion::Torso) && I<=static_cast<int32>(EInjuryRegion::RightLeg);
+}
+int32 UInjuryComponent::PartIndex(EInjuryRegion Region) { return static_cast<int32>(Region); }
+bool UInjuryComponent::IsPartInjured(EInjuryRegion Region) const
+{
+    // 加一个小容差，避免 9/30 这类浮点边界判不进去。
+    return HasPartHealth(Region) && GetPartHealth(Region)<=PartMaxHealth*InjuredThreshold+KINDA_SMALL_NUMBER;
+}
+void UInjuryComponent::DamagePart(EInjuryRegion Region, float Amount)
+{
+    if (!HasPartHealth(Region)) return;
+    const int32 I=PartIndex(Region);
+    PartHealth[I]=FMath::Clamp(PartHealth[I]-Amount,0.f,PartMaxHealth);
+}
+void UInjuryComponent::ResetPartHealth()
+{
+    for (int I=1;I<=6;++I) PartHealth[I]=PartMaxHealth;
+}
+float UInjuryComponent::GetPartHealth(EInjuryRegion Region) const
+{
+    return HasPartHealth(Region) ? PartHealth[PartIndex(Region)] : 0.f;
+}
+float UInjuryComponent::GetPartHealthPercent(EInjuryRegion Region) const
+{
+    return HasPartHealth(Region) && PartMaxHealth>0 ? FMath::Clamp(GetPartHealth(Region)/PartMaxHealth,0.f,1.f) : 0.f;
+}
+float UInjuryComponent::GetPartMaxHealth(EInjuryRegion Region) const { return HasPartHealth(Region) ? PartMaxHealth : 0.f; }
 EInjuryRegion UInjuryComponent::ResolveRegion(FName BoneName) const { return ToRegion(ResolveBodyPart(BoneName)); }
 bool UInjuryComponent::IsRegionInjured(EInjuryRegion Region) const
 {
@@ -79,7 +106,7 @@ bool UInjuryComponent::ApplyDamageToPart(EInjuryRegion Part, float DamageAmount)
     if (Part==EInjuryRegion::Head)
     {
         if (IsDead() || !FMath::IsFinite(DamageAmount) || DamageAmount<0) return false;
-        const auto Old=State; State.Damage(DamageAmount); PublishChanges(Old); return true;
+        const auto Old=State; SyncTuning(); State.Damage(DamageAmount); PublishChanges(Old); return true;
     }
     EInjuryBodyPart Detail=EInjuryBodyPart::Unknown;
     switch (Part)
@@ -102,9 +129,16 @@ bool UInjuryComponent::ApplyPartDamage(EInjuryBodyPart Part, float Amount)
 {
     const auto P=static_cast<InjuryRules::Part>(Part);
     if (!InjuryRules::State::Valid(P) || P==InjuryRules::Part::Head || IsDead() || !FMath::IsFinite(Amount) || Amount<0) return false;
+    const EInjuryRegion Region=ToRegion(Part);
+    if (!HasPartHealth(Region)) return false;
     const auto Old=State; SyncTuning();
-    // 统一入口传入的伤害只扣一次，不再叠加旧 BulletDamage 默认值。
-    State.Wounds[static_cast<int>(P)]=true; if (P==InjuryRules::Part::Torso) State.Bleeding=true;
+    // 先扣部位耐久；只有跌破阈值才建立伤口并触发流血/倍率。
+    DamagePart(Region,Amount);
+    if (IsPartInjured(Region))
+    {
+        State.Wounds[static_cast<int>(P)]=true;
+        if (P==InjuryRules::Part::Torso) State.Bleeding=true;
+    }
     State.Damage(Amount);
     if (State.Bleeding && !Old.Bleeding && GetWorld())
     {
@@ -112,11 +146,6 @@ bool UInjuryComponent::ApplyPartDamage(EInjuryBodyPart Part, float Amount)
         GetWorld()->GetTimerManager().SetTimer(BleedTimer,this,&UInjuryComponent::HandleBleedTick,ActiveBleedInterval,true);
     }
     PublishChanges(Old); return true;
-}
-bool UInjuryComponent::ApplyBulletHitFromHit(const FHitResult& Hit)
-{
-    if (!GetOwner() || Hit.GetActor()!=GetOwner()) return false;
-    return ApplyBulletHit(ResolveBodyPart(Hit.BoneName));
 }
 void UInjuryComponent::HandlePointDamage(AActor*, float Damage, AController*, FVector, UPrimitiveComponent*, FName BoneName, FVector, const UDamageType*, AActor*)
 {
@@ -139,7 +168,6 @@ EInjuryBodyPart UInjuryComponent::ResolveBodyPart(FName BoneName) const
     return EInjuryBodyPart::Unknown;
 }
 void UInjuryComponent::ApplyHealthDamage(float Amount) { const auto Old=State; SyncTuning(); State.Damage(Amount); PublishChanges(Old); }
-void UInjuryComponent::TestDamage25() { ApplyHealthDamage(25); }
 void UInjuryComponent::HandleBleedTick()
 {
     const auto Old=State; SyncTuning(); State.BleedTick(); PublishChanges(Old);
@@ -166,6 +194,7 @@ void UInjuryComponent::TreatTorso(float HealAmount)
 {
     if (IsDead() || !FMath::IsFinite(HealAmount) || HealAmount<0) return;
     const auto Old=State; SyncTuning(); State.Bleeding=false; State.Wounds[static_cast<int>(InjuryRules::Part::Torso)]=false;
+    PartHealth[PartIndex(EInjuryRegion::Torso)]=PartMaxHealth;
     State.Health=FMath::Min(State.MaxHealth,State.Health+HealAmount); PublishChanges(Old);
 }
 void UInjuryComponent::PublishChanges(const InjuryRules::State& Old)
@@ -189,7 +218,7 @@ void UInjuryComponent::PublishChanges(const InjuryRules::State& Old)
 void UInjuryComponent::ResetInjuries()
 {
     if (GetWorld()) GetWorld()->GetTimerManager().ClearTimer(BleedTimer);
-    EndFlash(); SyncTuning(); State.Reset(); BroadcastCurrentState(); OnReset.Broadcast();
+    EndFlash(); SyncTuning(); State.Reset(); ResetPartHealth(); BroadcastCurrentState(); OnReset.Broadcast();
 }
 void UInjuryComponent::BroadcastCurrentState()
 {
