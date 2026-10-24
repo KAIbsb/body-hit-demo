@@ -20,7 +20,7 @@ void UInjuryLabWidget::RefreshDisplay()
     auto Text=[this](FName Name,const FString& Value) { if (auto* T=WidgetTree->FindWidget<UTextBlock>(Name)) T->SetText(FText::FromString(Value)); };
     Text(TEXT("HealthText"),FString::Printf(TEXT("HP  %.0f / %.0f"),InjuryComponent->GetHealth(),InjuryComponent->GetMaxHealth()));
     Text(TEXT("TierText"),FString::Printf(TEXT("血丝接口档位：%d / 4"),InjuryComponent->GetBloodVisionTier()));
-    Text(TEXT("ModifierText"),FString::Printf(TEXT("后坐力 ×%.2f\n换弹耗时 ×%.2f\n移速接口 ×%.2f"),InjuryComponent->GetRecoilMultiplier(),InjuryComponent->GetReloadDurationMultiplier(),InjuryComponent->GetMoveSpeedMultiplier()));
+    Text(TEXT("ModifierText"),FString::Printf(TEXT("后坐力 ×%.2f\n换弹速度 ×%.2f\n移速 ×%.2f"),InjuryComponent->GetRecoilMultiplier(),InjuryComponent->GetReloadSpeedMultiplier(),InjuryComponent->GetMoveSpeedMultiplier()));
     Text(TEXT("StatusText"),InjuryComponent->IsDead() ? TEXT("血量已归零") : InjuryComponent->IsBleeding() ? TEXT("躯干流血中") : TEXT("等待受击"));
     Text(TEXT("FlashText"),InjuryComponent->IsFlashed() ? FString::Printf(TEXT("白屏接口：强度 1，剩余 %.1f 秒"),InjuryComponent->GetFlashRemainingSeconds()) : TEXT("白屏接口：待触发"));
     const auto HeadState=InjuryComponent->GetHeadState();

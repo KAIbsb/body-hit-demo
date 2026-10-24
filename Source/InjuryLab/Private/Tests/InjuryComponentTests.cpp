@@ -61,7 +61,12 @@ bool FInjuryHealthTest::RunTest(const FString&)
     TestEqual(TEXT("head damage lowers health"),C->GetHealth(),20.f);
     TestFalse(TEXT("head has no wound"),C->IsRegionInjured(EInjuryRegion::Head));
     C->ResetInjuries();
-    for (int I=1;I<=4;++I) { C->ApplyHealthDamage(25); TestEqual(TEXT("25 loss tier"),C->GetBloodVisionTier(),I); }
+    TestEqual(TEXT("full health tier"),C->GetBloodVisionTier(),0);
+    C->ApplyHealthDamage(70); TestEqual(TEXT("30 percent enters tier one"),C->GetBloodVisionTier(),1);
+    C->ApplyHealthDamage(10); TestEqual(TEXT("20 percent enters tier two"),C->GetBloodVisionTier(),2);
+    C->ApplyHealthDamage(10); TestEqual(TEXT("10 percent enters tier three"),C->GetBloodVisionTier(),3);
+    C->ApplyHealthDamage(5); TestEqual(TEXT("5 percent enters tier four"),C->GetBloodVisionTier(),4);
+    C->ApplyHealthDamage(5); TestEqual(TEXT("zero health stays tier four"),C->GetBloodVisionTier(),4);
     C->ResetInjuries();
     TestEqual(TEXT("finger maps hand"),C->ResolveBodyPart(TEXT("index_03_r")),EInjuryBodyPart::RightHand);
     TestEqual(TEXT("thigh twist maps thigh"),C->ResolveBodyPart(TEXT("thigh_twist_01_l")),EInjuryBodyPart::LeftThigh);
@@ -282,7 +287,7 @@ bool FInjuryBloodVisionTest::RunTest(const FString&)
     FInjuryTestWorld Test; auto* C=Test.Component();
     C->BloodVisionMaxOpacity=0.1f; C->BloodVisionFadeSeconds=0.5f;
     TestEqual(TEXT("blood opacity starts clear"),C->GetBloodVisionOpacity(),0.f);
-    C->ApplyHealthDamage(25);
+    C->ApplyHealthDamage(70);
     TestEqual(TEXT("first blood tier"),C->GetBloodVisionTier(),1);
     TestTrue(TEXT("opacity does not jump at once"),C->GetBloodVisionOpacity()<0.001f);
     Test.Advance(0.25f);
@@ -291,10 +296,14 @@ bool FInjuryBloodVisionTest::RunTest(const FString&)
     Test.Advance(0.35f);
     TestTrue(TEXT("tier one target"),FMath::IsNearlyEqual(C->GetBloodVisionOpacity(),0.025f,0.0005f));
     TestTrue(TEXT("custom max scales by percent"),FMath::IsNearlyEqual(C->GetBloodVisionOpacity(0.2f),0.05f,0.0005f));
-    C->ApplyHealthDamage(25); Test.Advance(0.6f);
+    C->ApplyHealthDamage(10); Test.Advance(0.6f);
     TestTrue(TEXT("tier two target"),FMath::IsNearlyEqual(C->GetBloodVisionOpacity(),0.05f,0.0005f));
-    C->ApplyHealthDamage(50); Test.Advance(0.6f);
+    C->ApplyHealthDamage(10); Test.Advance(0.6f);
+    TestTrue(TEXT("tier three target"),FMath::IsNearlyEqual(C->GetBloodVisionOpacity(),0.075f,0.0005f));
+    C->ApplyHealthDamage(5); Test.Advance(0.6f);
     TestTrue(TEXT("tier four target"),FMath::IsNearlyEqual(C->GetBloodVisionOpacity(),0.1f,0.0005f));
+    C->ApplyHealthDamage(5); Test.Advance(0.6f);
+    TestTrue(TEXT("zero health stays max"),FMath::IsNearlyEqual(C->GetBloodVisionOpacity(),0.1f,0.0005f));
     C->ResetInjuries(); Test.Advance(0.6f);
     TestTrue(TEXT("reset fades out"),FMath::IsNearlyEqual(C->GetBloodVisionOpacity(),0.f,0.0005f));
     return true;
