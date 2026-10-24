@@ -10,12 +10,16 @@ class UInjuryEventProbe : public UObject
     GENERATED_BODY()
 public:
     int32 BlindRequests=0, BlindEnds=0, Regions=0, ModifierEvents=0, Deaths=0;
+    int32 BrokenEvents=0;
+    EInjuryRegion LastBrokenRegion=EInjuryRegion::Unknown;
+    bool bLastBroken=false;
     EInjuryHeadState LastBlind=EInjuryHeadState::Normal, LastEnded=EInjuryHeadState::Normal;
     EInjuryRegion LastRegion=EInjuryRegion::Unknown;
     float Opacity=0, Duration=0, ReloadDuration=1, ReloadSpeed=1, MoveSpeed=1;
     UFUNCTION() void Blind(EInjuryHeadState Type,float Alpha,float Seconds,UCurveFloat* Curve) { ++BlindRequests; LastBlind=Type; Opacity=Alpha; Duration=Seconds; }
     UFUNCTION() void Ended(EInjuryHeadState Type) { ++BlindEnds; LastEnded=Type; }
     UFUNCTION() void Region(EInjuryRegion Part,bool bInjured) { ++Regions; LastRegion=Part; }
+    UFUNCTION() void Broken(EInjuryRegion Part,bool bBroken) { ++BrokenEvents; LastBrokenRegion=Part; bLastBroken=bBroken; }
     UFUNCTION() void Modifiers(float ReloadTime,float ReloadRate,float Speed) { ++ModifierEvents; ReloadDuration=ReloadTime; ReloadSpeed=ReloadRate; MoveSpeed=Speed; }
     UFUNCTION() void Died() { ++Deaths; }
 };

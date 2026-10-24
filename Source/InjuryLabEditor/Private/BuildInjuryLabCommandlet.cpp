@@ -198,7 +198,7 @@ UWidgetBlueprint* BuildWidget(bool bUpdateMinecraftHUD)
     {
         auto* Border=T->ConstructWidget<UBorder>(UBorder::StaticClass(),P.Name); Border->SetBrushColor(FLinearColor(0.38f,0.40f,0.44f,1)); Place(Body,Border,P.X,P.Y,P.W,P.H);
     }
-    Label(T,Body,TEXT("ModifierText"),TEXT("后坐力 ×1.00\n换弹耗时 ×1.00\n移速接口 ×1.00"),18,372,314,90,18);
+    Label(T,Body,TEXT("ModifierText"),TEXT("后坐力 ×1.00\n灵敏度 ×1.00\n换弹速度 ×1.00\n移速 ×1.00"),18,372,314,90,18);
     auto* Status=Panel(T,Root,TEXT("StatePanel"),0,-24,530,98,FVector2D(0.5f,1),FVector2D(0.5f,1));
     Label(T,Status,TEXT("StatusText"),TEXT("点击左侧按钮测试受伤判定"),18,12,494,28,18);
     Label(T,Status,TEXT("FlashText"),TEXT("白屏接口：待触发"),18,48,494,28,18,FLinearColor(0.67f,0.75f,0.83f,1));

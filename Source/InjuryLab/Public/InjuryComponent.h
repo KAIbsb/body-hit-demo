@@ -41,6 +41,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FInjuryFlashEvent, float, WhiteStre
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInjuryBleedEvent, bool, bBleeding);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FInjurySimpleEvent);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FInjuryRegionEvent, EInjuryRegion, Region, bool, bInjured);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FInjuryRegionBrokenEvent, EInjuryRegion, Region, bool, bBroken);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInjuryHeadEvent, EInjuryHeadState, HeadState);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FInjuryBlindEvent, EInjuryHeadState, Type, float, InitialOpacity, float, DurationSeconds, UCurveFloat*, FadeCurve);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FInjuryGameplayModifierEvent, float, ReloadDurationMultiplier, float, ReloadSpeedMultiplier, float, MoveSpeedMultiplier);
@@ -60,8 +61,13 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Bleeding", meta=(ClampMin="0.01")) float BleedIntervalSeconds = 0.5f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Bleeding", meta=(ClampMin="0")) float BleedDamagePerTick = 1;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Bleeding", meta=(ClampMin="1")) float BleedMinimumHealth = 1;
+    // 血雾/血丝透明度：Tier 0–4 映射到 0..MaxOpacity，档位切换时按 FadeSeconds 插值。
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|BloodVision", meta=(ClampMin="0", ClampMax="1")) float BloodVisionMaxOpacity = 0.1f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|BloodVision", meta=(ClampMin="0")) float BloodVisionFadeSeconds = 0.5f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Tuning", meta=(ClampMin="1")) float InjuredReloadDurationMultiplier = 1.5f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Tuning", meta=(ClampMin="0", ClampMax="1")) float InjuredMoveSpeedMultiplier = 0.6f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Tuning", meta=(ClampMin="1")) float InjuredRecoilMultiplier = 5.0f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Tuning", meta=(ClampMin="0", ClampMax="1")) float InjuredSensitivityMultiplier = 0.3f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Tuning") EInjuryStackingPolicy ArmStackingPolicy = EInjuryStackingPolicy::Unified;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Tuning") EInjuryStackingPolicy LegStackingPolicy = EInjuryStackingPolicy::Unified;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Flash", meta=(ClampMin="0.01")) float FlashDurationSeconds = 3;
@@ -83,6 +89,7 @@ public:
     UPROPERTY(BlueprintAssignable, Category="Injury|Events") FInjurySimpleEvent OnDeath;
     UPROPERTY(BlueprintAssignable, Category="Injury|Events") FInjurySimpleEvent OnReset;
     UPROPERTY(BlueprintAssignable, Category="Injury|Events") FInjuryRegionEvent OnRegionInjuryChanged;
+    UPROPERTY(BlueprintAssignable, Category="Injury|Events") FInjuryRegionBrokenEvent OnRegionBrokenChanged;
     UPROPERTY(BlueprintAssignable, Category="Injury|Events") FInjuryHeadEvent OnHeadConditionChanged;
     UPROPERTY(BlueprintAssignable, Category="Injury|Events") FInjuryBlindEvent OnBlindRequested;
     UPROPERTY(BlueprintAssignable, Category="Injury|Events") FInjuryHeadEvent OnBlindEnded;
@@ -94,6 +101,8 @@ public:
     UFUNCTION(BlueprintCallable, Category="Injury|Hit") EInjuryRegion ApplyExternalHit(const FHitResult& Hit);
     UFUNCTION(BlueprintPure, Category="Injury|State") FInjuryRegionStates GetRegionStates() const;
     UFUNCTION(BlueprintPure, Category="Injury|State") bool IsRegionInjured(EInjuryRegion Region) const;
+    // 部位耐久归零（破坏）查询；头部没有部位耐久，恒为 false。
+    UFUNCTION(BlueprintPure, Category="Injury|State") bool IsRegionBroken(EInjuryRegion Region) const;
     // 头部没有部位耐久；其他区域返回 0..PartMaxHealth。
     UFUNCTION(BlueprintPure, Category="Injury|Parts") float GetPartHealth(EInjuryRegion Region) const;
     UFUNCTION(BlueprintPure, Category="Injury|Parts") float GetPartHealthPercent(EInjuryRegion Region) const;
@@ -118,6 +127,9 @@ public:
     UFUNCTION(BlueprintPure, Category="Injury|State") float GetMaxHealth() const { return State.MaxHealth; }
     UFUNCTION(BlueprintPure, Category="Injury|State") float GetHealthPercent() const { return State.MaxHealth>0 ? FMath::Clamp(State.Health/State.MaxHealth,0.f,1.f) : 0; }
     UFUNCTION(BlueprintPure, Category="Injury|State") int32 GetBloodVisionTier() const { return State.Tier(); }
+    // 当前血雾透明度；MaxOpacity < 0 时使用组件 Details 的 Blood Vision Max Opacity。
+    // 每档透明度 = 档位比例（0/0.25/0.5/0.75/1）× MaxOpacity，切换档位时插值。
+    UFUNCTION(BlueprintPure, Category="Injury|State") float GetBloodVisionOpacity(float MaxOpacity = -1.f) const;
     UFUNCTION(BlueprintPure, Category="Injury|State") bool IsBodyPartInjured(EInjuryBodyPart Part) const;
     UFUNCTION(BlueprintPure, Category="Injury|State") bool IsBleeding() const { return State.Bleeding; }
     UFUNCTION(BlueprintPure, Category="Injury|State") bool IsDead() const { return State.Health <= 0; }
@@ -127,13 +139,16 @@ public:
     UFUNCTION(BlueprintPure, Category="Injury|State") float GetBlindRemainingSeconds() const;
     UFUNCTION(BlueprintPure, Category="Injury|State") float GetBlindOpacity() const;
     UFUNCTION(BlueprintPure, Category="Injury|State") float GetFlashRemainingSeconds() const;
-    UFUNCTION(BlueprintPure, Category="Injury|State") float GetRecoilMultiplier() const { return State.Recoil(); }
+    // 右手破坏后后坐力提高；腹部（Torso）破坏后灵敏度降低。
+    UFUNCTION(BlueprintPure, Category="Injury|State") float GetRecoilMultiplier() const { return IsRegionBroken(EInjuryRegion::RightArm) ? InjuredRecoilMultiplier : 1.f; }
+    UFUNCTION(BlueprintPure, Category="Injury|State") float GetSensitivityMultiplier() const { return IsRegionBroken(EInjuryRegion::Torso) ? InjuredSensitivityMultiplier : 1.f; }
     UFUNCTION(BlueprintPure, Category="Injury|State") float GetReloadDurationMultiplier() const { return State.ReloadDuration(); }
     UFUNCTION(BlueprintPure, Category="Injury|State") float GetReloadSpeedMultiplier() const { return State.ReloadSpeed(); }
     UFUNCTION(BlueprintPure, Category="Injury|State") float GetMoveSpeedMultiplier() const { return State.MoveSpeed(); }
 
 protected:
     virtual void BeginPlay() override;
+    virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
     virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 private:
     InjuryRules::State State;
@@ -143,6 +158,9 @@ private:
     UPROPERTY() TObjectPtr<UCurveFloat> ActiveFadeCurve;
     // 下标 1–6 对应 EInjuryRegion；下标 0 不使用。头部没有部位耐久。
     float PartHealth[7] = {};
+    // BloodVisionLevel 是 0..1 的档位比例，乘以调用方传入的最大透明度得到最终值。
+    float BloodVisionLevel = 0.f, BloodVisionBlendStart = 0.f, BloodVisionBlendTarget = 0.f, BloodVisionBlendElapsed = 0.f;
+    float BloodVisionTargetLevel() const;
     static bool HasPartHealth(EInjuryRegion Region);
     static int32 PartIndex(EInjuryRegion Region);
     static EInjuryRegion ToRegion(EInjuryBodyPart Part);

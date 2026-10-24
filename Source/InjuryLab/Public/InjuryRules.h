@@ -16,7 +16,16 @@ struct State
     static bool Valid(Part p) { return p > Part::Unknown && p < Part::Count; }
     static bool Arm(Part p) { return p >= Part::LeftUpperArm && p <= Part::RightHand; }
     static bool Leg(Part p) { return p >= Part::LeftThigh && p <= Part::RightFoot; }
-    int Tier() const { return std::clamp(static_cast<int>(std::floor((MaxHealth-Health)/25.0f)), 0, 4); }
+    // 血雾分档：30% 以上无效果；30/20/10/5% 为四个下坡档位，5% 以下保持最高档。
+    int Tier() const
+    {
+        const float Percent=MaxHealth>0 ? Health/MaxHealth : 0.f;
+        if (Percent>0.30f) return 0;
+        if (Percent>0.20f) return 1;
+        if (Percent>0.10f) return 2;
+        if (Percent>0.05f) return 3;
+        return 4;
+    }
     bool IsInjured(Part p) const { return Valid(p) && p!=Part::Head && Wounds[static_cast<int>(p)]; }
     bool Any(Part first, Part last) const
     {
