@@ -11,11 +11,54 @@
 #include "Curves/CurveFloat.h"
 static_assert(static_cast<int>(EInjuryBodyPart::RightFoot)+1==static_cast<int>(InjuryRules::Part::Count));
 
-UInjuryComponent::UInjuryComponent() { PrimaryComponentTick.bCanEverTick = false; }
+UInjuryComponent::UInjuryComponent()
+{
+    // 每帧只推进血雾透明度插值，成本很低。
+    PrimaryComponentTick.bCanEverTick = true;
+}
 void UInjuryComponent::BeginPlay()
 {
     Super::BeginPlay(); SyncTuning(); State.Reset(); ResetPartHealth();
+    BloodVisionLevel=0.f; BloodVisionBlendStart=0.f; BloodVisionBlendTarget=BloodVisionTargetLevel(); BloodVisionBlendElapsed=BloodVisionFadeSeconds;
     GetOwner()->OnTakePointDamage.AddDynamic(this, &UInjuryComponent::HandlePointDamage);
+}
+void UInjuryComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+{
+    Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+    if (DeltaTime <= 0.f) return;
+    const float Target=BloodVisionTargetLevel();
+    if (!FMath::IsNearlyEqual(Target,BloodVisionBlendTarget,KINDA_SMALL_NUMBER))
+    {
+        // 中途换档时从当前值继续过渡，避免跳变。
+        BloodVisionBlendStart=BloodVisionLevel;
+        BloodVisionBlendTarget=Target;
+        BloodVisionBlendElapsed=0.f;
+    }
+    if (BloodVisionFadeSeconds<=KINDA_SMALL_NUMBER)
+    {
+        BloodVisionLevel=BloodVisionBlendTarget;
+        return;
+    }
+    if (BloodVisionBlendElapsed<BloodVisionFadeSeconds)
+    {
+        BloodVisionBlendElapsed=FMath::Min(BloodVisionBlendElapsed+DeltaTime,BloodVisionFadeSeconds);
+        const float Alpha=BloodVisionBlendElapsed/BloodVisionFadeSeconds;
+        BloodVisionLevel=FMath::Lerp(BloodVisionBlendStart,BloodVisionBlendTarget,FMath::InterpEaseInOut(0.f,1.f,Alpha,2.f));
+    }
+    else
+    {
+        BloodVisionLevel=BloodVisionBlendTarget;
+    }
+}
+float UInjuryComponent::BloodVisionTargetLevel() const
+{
+    // Tier 0–4 -> 0, 0.25, 0.5, 0.75, 1；最终透明度再乘 MaxOpacity。
+    return FMath::Clamp(static_cast<float>(State.Tier())/4.f,0.f,1.f);
+}
+float UInjuryComponent::GetBloodVisionOpacity(float MaxOpacity) const
+{
+    const float EffectiveMax=FMath::IsFinite(MaxOpacity) && MaxOpacity>=0.f ? MaxOpacity : BloodVisionMaxOpacity;
+    return FMath::Clamp(BloodVisionLevel,0.f,1.f)*FMath::Clamp(EffectiveMax,0.f,1.f);
 }
 void UInjuryComponent::EndPlay(const EEndPlayReason::Type Reason)
 {
@@ -37,6 +80,8 @@ void UInjuryComponent::SyncTuning()
     PartMaxHealth=FMath::Max(1.f,Safe(PartMaxHealth,30));
     InjuredThreshold=FMath::Clamp(Safe(InjuredThreshold,0.3f),0.f,1.f);
     for (int I=1;I<=6;++I) PartHealth[I]=FMath::Clamp(PartHealth[I],0.f,PartMaxHealth);
+    BloodVisionMaxOpacity=FMath::Clamp(Safe(BloodVisionMaxOpacity,0.1f),0.f,1.f);
+    BloodVisionFadeSeconds=FMath::Max(0.f,Safe(BloodVisionFadeSeconds,0.5f));
 }
 bool UInjuryComponent::IsBodyPartInjured(EInjuryBodyPart Part) const { return State.IsInjured(static_cast<InjuryRules::Part>(Part)); }
 EInjuryRegion UInjuryComponent::ToRegion(EInjuryBodyPart Part)
@@ -83,6 +128,10 @@ float UInjuryComponent::GetPartHealthPercent(EInjuryRegion Region) const
 }
 float UInjuryComponent::GetPartMaxHealth(EInjuryRegion Region) const { return HasPartHealth(Region) ? PartMaxHealth : 0.f; }
 EInjuryRegion UInjuryComponent::ResolveRegion(FName BoneName) const { return ToRegion(ResolveBodyPart(BoneName)); }
+bool UInjuryComponent::IsRegionBroken(EInjuryRegion Region) const
+{
+    return HasPartHealth(Region) && PartHealth[PartIndex(Region)]<=0.f;
+}
 bool UInjuryComponent::IsRegionInjured(EInjuryRegion Region) const
 {
     switch (Region)
@@ -128,16 +177,19 @@ EInjuryRegion UInjuryComponent::ApplyExternalHit(const FHitResult& Hit)
 bool UInjuryComponent::ApplyPartDamage(EInjuryBodyPart Part, float Amount)
 {
     const auto P=static_cast<InjuryRules::Part>(Part);
-    if (!InjuryRules::State::Valid(P) || P==InjuryRules::Part::Head || IsDead() || !FMath::IsFinite(Amount) || Amount<0) return false;
+    // 死亡后仍允许扣部位耐久，方便测试部位破坏；总血已为 0 时不再变化。
+    if (!InjuryRules::State::Valid(P) || P==InjuryRules::Part::Head || !FMath::IsFinite(Amount) || Amount<0) return false;
     const EInjuryRegion Region=ToRegion(Part);
     if (!HasPartHealth(Region)) return false;
     const auto Old=State; SyncTuning();
+    const bool bWasBroken=IsRegionBroken(Region);
     // 先扣部位耐久；只有跌破阈值才建立伤口并触发流血/倍率。
     DamagePart(Region,Amount);
     if (IsPartInjured(Region))
     {
         State.Wounds[static_cast<int>(P)]=true;
-        if (P==InjuryRules::Part::Torso) State.Bleeding=true;
+        // 已死亡时不重新开启流血，避免死亡后继续跑流血计时器。
+        if (P==InjuryRules::Part::Torso && State.Health>0) State.Bleeding=true;
     }
     State.Damage(Amount);
     if (State.Bleeding && !Old.Bleeding && GetWorld())
@@ -145,7 +197,10 @@ bool UInjuryComponent::ApplyPartDamage(EInjuryBodyPart Part, float Amount)
         ActiveBleedInterval=FMath::IsFinite(BleedIntervalSeconds) ? FMath::Max(0.01f,BleedIntervalSeconds) : 0.5f;
         GetWorld()->GetTimerManager().SetTimer(BleedTimer,this,&UInjuryComponent::HandleBleedTick,ActiveBleedInterval,true);
     }
-    PublishChanges(Old); return true;
+    PublishChanges(Old);
+    // 耐久归零瞬间广播部位破坏；只在跨过 0 时触发一次。
+    if (bWasBroken!=IsRegionBroken(Region)) OnRegionBrokenChanged.Broadcast(Region,IsRegionBroken(Region));
+    return true;
 }
 void UInjuryComponent::HandlePointDamage(AActor*, float Damage, AController*, FVector, UPrimitiveComponent*, FName BoneName, FVector, const UDamageType*, AActor*)
 {
@@ -193,9 +248,10 @@ void UInjuryComponent::ConfigureBleeding(float IntervalSeconds, float DamagePerT
 void UInjuryComponent::TreatTorso(float HealAmount)
 {
     if (IsDead() || !FMath::IsFinite(HealAmount) || HealAmount<0) return;
-    const auto Old=State; SyncTuning(); State.Bleeding=false; State.Wounds[static_cast<int>(InjuryRules::Part::Torso)]=false;
+    const auto Old=State; SyncTuning(); const bool bWasBroken=IsRegionBroken(EInjuryRegion::Torso); State.Bleeding=false; State.Wounds[static_cast<int>(InjuryRules::Part::Torso)]=false;
     PartHealth[PartIndex(EInjuryRegion::Torso)]=PartMaxHealth;
     State.Health=FMath::Min(State.MaxHealth,State.Health+HealAmount); PublishChanges(Old);
+    if (bWasBroken) OnRegionBrokenChanged.Broadcast(EInjuryRegion::Torso,false);
 }
 void UInjuryComponent::PublishChanges(const InjuryRules::State& Old)
 {
@@ -226,6 +282,8 @@ void UInjuryComponent::BroadcastCurrentState()
     OnBloodVisionTierChanged.Broadcast(State.Tier(),State.Tier()/4.f);
     for (int I=2; I<static_cast<int>(InjuryRules::Part::Count); ++I) OnBodyPartInjuryChanged.Broadcast(static_cast<EInjuryBodyPart>(I),State.Wounds[I]);
     for (int I=2;I<=6;++I) OnRegionInjuryChanged.Broadcast(static_cast<EInjuryRegion>(I),IsRegionInjured(static_cast<EInjuryRegion>(I)));
+    // 同步当前破坏状态，供刚绑定事件或刚创建的 UI 初始化。
+    for (int I=2;I<=6;++I) OnRegionBrokenChanged.Broadcast(static_cast<EInjuryRegion>(I),IsRegionBroken(static_cast<EInjuryRegion>(I)));
     OnInjuryModifiersChanged.Broadcast(State.Recoil(),State.ReloadDuration(),State.MoveSpeed());
     OnGameplayModifiersChanged.Broadcast(State.ReloadDuration(),State.ReloadSpeed(),State.MoveSpeed());
     OnBleedingChanged.Broadcast(State.Bleeding);

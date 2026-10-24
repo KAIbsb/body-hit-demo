@@ -229,4 +229,74 @@ bool FInjuryModifierTest::RunTest(const FString&)
     C->ResetInjuries(); TestEqual(TEXT("reset duration event"),Probe->ReloadDuration,1.f); TestEqual(TEXT("reset speed event"),Probe->MoveSpeed,1.f);
     return true;
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInjuryBrokenTest,"InjuryLab.Backend.PartBrokenEvents",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FInjuryBrokenTest::RunTest(const FString&)
+{
+    FInjuryTestWorld Test; auto* C=Test.Component(); C->PartMaxHealth=10.f; TStrongObjectPtr<UInjuryEventProbe> Probe(NewObject<UInjuryEventProbe>());
+    C->OnRegionBrokenChanged.AddDynamic(Probe.Get(),&UInjuryEventProbe::Broken);
+    TestFalse(TEXT("head never breaks"),C->IsRegionBroken(EInjuryRegion::Head));
+    C->ApplyDamageToPart(EInjuryRegion::LeftArm,4);
+    TestFalse(TEXT("partial durability stays intact"),C->IsRegionBroken(EInjuryRegion::LeftArm));
+    TestEqual(TEXT("no event before zero"),Probe->BrokenEvents,0);
+    C->ApplyDamageToPart(EInjuryRegion::LeftArm,6);
+    TestTrue(TEXT("zero durability breaks arm"),C->IsRegionBroken(EInjuryRegion::LeftArm));
+    TestEqual(TEXT("break event count"),Probe->BrokenEvents,1);
+    TestEqual(TEXT("break event region"),Probe->LastBrokenRegion,EInjuryRegion::LeftArm);
+    TestTrue(TEXT("break event state"),Probe->bLastBroken);
+    C->ApplyDamageToPart(EInjuryRegion::LeftArm,1);
+    TestEqual(TEXT("already broken does not repeat"),Probe->BrokenEvents,1);
+    C->ResetInjuries();
+    TestFalse(TEXT("reset repairs arm"),C->IsRegionBroken(EInjuryRegion::LeftArm));
+    TestFalse(TEXT("reset broadcasts repaired state"),Probe->bLastBroken);
+    TestEqual(TEXT("reset sync ends on right leg"),Probe->LastBrokenRegion,EInjuryRegion::RightLeg);
+    C->ApplyDamageToPart(EInjuryRegion::Torso,10);
+    TestTrue(TEXT("torso breaks"),C->IsRegionBroken(EInjuryRegion::Torso));
+    C->TreatTorso(0);
+    TestFalse(TEXT("treatment repairs torso durability"),C->IsRegionBroken(EInjuryRegion::Torso));
+    TestFalse(TEXT("repair event state"),Probe->bLastBroken);
+    TestEqual(TEXT("repair event region"),Probe->LastBrokenRegion,EInjuryRegion::Torso);
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInjuryDeadPartTest,"InjuryLab.Backend.DeadPartDamage",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FInjuryDeadPartTest::RunTest(const FString&)
+{
+    FInjuryTestWorld Test; auto* C=Test.Component(); C->PartMaxHealth=10.f; TStrongObjectPtr<UInjuryEventProbe> Probe(NewObject<UInjuryEventProbe>());
+    C->OnRegionBrokenChanged.AddDynamic(Probe.Get(),&UInjuryEventProbe::Broken);
+    C->ApplyHealthDamage(100);
+    TestTrue(TEXT("dead state reached"),C->IsDead());
+    TestTrue(TEXT("dead still accepts part damage"),C->ApplyDamageToPart(EInjuryRegion::RightArm,4));
+    TestEqual(TEXT("dead part durability decreases"),C->GetPartHealth(EInjuryRegion::RightArm),6.f);
+    TestFalse(TEXT("part not broken yet"),C->IsRegionBroken(EInjuryRegion::RightArm));
+    C->ApplyDamageToPart(EInjuryRegion::RightArm,6);
+    TestTrue(TEXT("dead part can break"),C->IsRegionBroken(EInjuryRegion::RightArm));
+    TestEqual(TEXT("dead break event count"),Probe->BrokenEvents,1);
+    TestEqual(TEXT("dead break event region"),Probe->LastBrokenRegion,EInjuryRegion::RightArm);
+    C->ApplyDamageToPart(EInjuryRegion::Torso,10);
+    TestTrue(TEXT("dead torso part breaks"),C->IsRegionBroken(EInjuryRegion::Torso));
+    TestFalse(TEXT("dead torso does not restart bleeding"),C->IsBleeding());
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInjuryBloodVisionTest,"InjuryLab.Backend.BloodVisionOpacity",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FInjuryBloodVisionTest::RunTest(const FString&)
+{
+    FInjuryTestWorld Test; auto* C=Test.Component();
+    C->BloodVisionMaxOpacity=0.1f; C->BloodVisionFadeSeconds=0.5f;
+    TestEqual(TEXT("blood opacity starts clear"),C->GetBloodVisionOpacity(),0.f);
+    C->ApplyHealthDamage(25);
+    TestEqual(TEXT("first blood tier"),C->GetBloodVisionTier(),1);
+    TestTrue(TEXT("opacity does not jump at once"),C->GetBloodVisionOpacity()<0.001f);
+    Test.Advance(0.25f);
+    const float Mid=C->GetBloodVisionOpacity();
+    TestTrue(TEXT("opacity interpolates in"),Mid>0.f && Mid<0.025f);
+    Test.Advance(0.35f);
+    TestTrue(TEXT("tier one target"),FMath::IsNearlyEqual(C->GetBloodVisionOpacity(),0.025f,0.0005f));
+    TestTrue(TEXT("custom max scales by percent"),FMath::IsNearlyEqual(C->GetBloodVisionOpacity(0.2f),0.05f,0.0005f));
+    C->ApplyHealthDamage(25); Test.Advance(0.6f);
+    TestTrue(TEXT("tier two target"),FMath::IsNearlyEqual(C->GetBloodVisionOpacity(),0.05f,0.0005f));
+    C->ApplyHealthDamage(50); Test.Advance(0.6f);
+    TestTrue(TEXT("tier four target"),FMath::IsNearlyEqual(C->GetBloodVisionOpacity(),0.1f,0.0005f));
+    C->ResetInjuries(); Test.Advance(0.6f);
+    TestTrue(TEXT("reset fades out"),FMath::IsNearlyEqual(C->GetBloodVisionOpacity(),0.f,0.0005f));
+    return true;
+}
 #endif
