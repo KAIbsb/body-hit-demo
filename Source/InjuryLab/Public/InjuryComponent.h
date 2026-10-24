@@ -66,6 +66,8 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|BloodVision", meta=(ClampMin="0")) float BloodVisionFadeSeconds = 0.5f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Tuning", meta=(ClampMin="1")) float InjuredReloadDurationMultiplier = 1.5f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Tuning", meta=(ClampMin="0", ClampMax="1")) float InjuredMoveSpeedMultiplier = 0.6f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Tuning", meta=(ClampMin="1")) float InjuredRecoilMultiplier = 5.0f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Tuning", meta=(ClampMin="0", ClampMax="1")) float InjuredSensitivityMultiplier = 0.3f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Tuning") EInjuryStackingPolicy ArmStackingPolicy = EInjuryStackingPolicy::Unified;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Tuning") EInjuryStackingPolicy LegStackingPolicy = EInjuryStackingPolicy::Unified;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Injury|Flash", meta=(ClampMin="0.01")) float FlashDurationSeconds = 3;
@@ -137,7 +139,9 @@ public:
     UFUNCTION(BlueprintPure, Category="Injury|State") float GetBlindRemainingSeconds() const;
     UFUNCTION(BlueprintPure, Category="Injury|State") float GetBlindOpacity() const;
     UFUNCTION(BlueprintPure, Category="Injury|State") float GetFlashRemainingSeconds() const;
-    UFUNCTION(BlueprintPure, Category="Injury|State") float GetRecoilMultiplier() const { return State.Recoil(); }
+    // 右手破坏后后坐力提高；腹部（Torso）破坏后灵敏度降低。
+    UFUNCTION(BlueprintPure, Category="Injury|State") float GetRecoilMultiplier() const { return IsRegionBroken(EInjuryRegion::RightArm) ? InjuredRecoilMultiplier : 1.f; }
+    UFUNCTION(BlueprintPure, Category="Injury|State") float GetSensitivityMultiplier() const { return IsRegionBroken(EInjuryRegion::Torso) ? InjuredSensitivityMultiplier : 1.f; }
     UFUNCTION(BlueprintPure, Category="Injury|State") float GetReloadDurationMultiplier() const { return State.ReloadDuration(); }
     UFUNCTION(BlueprintPure, Category="Injury|State") float GetReloadSpeedMultiplier() const { return State.ReloadSpeed(); }
     UFUNCTION(BlueprintPure, Category="Injury|State") float GetMoveSpeedMultiplier() const { return State.MoveSpeed(); }

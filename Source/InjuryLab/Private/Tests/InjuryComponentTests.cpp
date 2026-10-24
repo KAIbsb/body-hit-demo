@@ -218,20 +218,26 @@ bool FInjuryModifierTest::RunTest(const FString&)
     FInjuryTestWorld Test; auto* C=Test.Component(); C->PartMaxHealth=10.f; TStrongObjectPtr<UInjuryEventProbe> Probe(NewObject<UInjuryEventProbe>());
     C->OnGameplayModifiersChanged.AddDynamic(Probe.Get(),&UInjuryEventProbe::Modifiers);
     C->OnRegionInjuryChanged.AddDynamic(Probe.Get(),&UInjuryEventProbe::Region);
+    TestEqual(TEXT("healthy recoil"),C->GetRecoilMultiplier(),1.f);
     C->ApplyDamageToPart(EInjuryRegion::LeftArm,10);
     TestEqual(TEXT("explicit regional damage"),C->GetHealth(),90.f);
     TestEqual(TEXT("left arm region event"),Probe->LastRegion,EInjuryRegion::LeftArm);
     TestEqual(TEXT("duration event multiplier"),Probe->ReloadDuration,1.5f);
     TestTrue(TEXT("animation speed reciprocal"),FMath::IsNearlyEqual(Probe->ReloadSpeed,1.f/1.5f));
+    TestEqual(TEXT("left arm does not raise recoil"),C->GetRecoilMultiplier(),1.f);
     C->ApplyDamageToPart(EInjuryRegion::RightArm,10); TestEqual(TEXT("default dual arms unified"),C->GetReloadDurationMultiplier(),1.5f);
+    TestEqual(TEXT("right arm raises recoil"),C->GetRecoilMultiplier(),5.f);
     C->ArmStackingPolicy=EInjuryStackingPolicy::StackBothSides; C->ApplyDamageToPart(EInjuryRegion::RightArm,0);
     TestEqual(TEXT("optional dual arm stacking"),C->GetReloadDurationMultiplier(),2.25f);
     C->ApplyDamageToPart(EInjuryRegion::LeftLeg,10); C->ApplyDamageToPart(EInjuryRegion::RightLeg,10);
     TestEqual(TEXT("default dual legs unified"),C->GetMoveSpeedMultiplier(),0.6f);
     C->LegStackingPolicy=EInjuryStackingPolicy::StackBothSides; C->ApplyDamageToPart(EInjuryRegion::RightLeg,0);
     TestTrue(TEXT("optional dual leg stacking"),FMath::IsNearlyEqual(Probe->MoveSpeed,0.36f));
-    TestEqual(TEXT("new spec has no recoil penalty"),C->GetRecoilMultiplier(),1.f);
+    TestEqual(TEXT("torso healthy sensitivity"),C->GetSensitivityMultiplier(),1.f);
+    C->ApplyDamageToPart(EInjuryRegion::Torso,10);
+    TestEqual(TEXT("torso break lowers sensitivity"),C->GetSensitivityMultiplier(),0.3f);
     C->ResetInjuries(); TestEqual(TEXT("reset duration event"),Probe->ReloadDuration,1.f); TestEqual(TEXT("reset speed event"),Probe->MoveSpeed,1.f);
+    TestEqual(TEXT("reset recoil"),C->GetRecoilMultiplier(),1.f); TestEqual(TEXT("reset sensitivity"),C->GetSensitivityMultiplier(),1.f);
     return true;
 }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInjuryBrokenTest,"InjuryLab.Backend.PartBrokenEvents",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

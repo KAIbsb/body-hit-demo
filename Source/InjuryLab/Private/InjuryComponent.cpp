@@ -75,6 +75,8 @@ void UInjuryComponent::SyncTuning()
     State.BleedMinimumHealth=FMath::Clamp(Safe(BleedMinimumHealth,1),1.f,State.MaxHealth);
     State.ArmReloadDuration=FMath::Max(1.f,Safe(InjuredReloadDurationMultiplier,1.5f));
     State.LegMoveSpeed=FMath::Clamp(Safe(InjuredMoveSpeedMultiplier,0.6f),0.f,1.f);
+    InjuredRecoilMultiplier=FMath::Max(1.f,Safe(InjuredRecoilMultiplier,5.f));
+    InjuredSensitivityMultiplier=FMath::Clamp(Safe(InjuredSensitivityMultiplier,0.3f),0.f,1.f);
     State.StackArmSides=ArmStackingPolicy==EInjuryStackingPolicy::StackBothSides;
     State.StackLegSides=LegStackingPolicy==EInjuryStackingPolicy::StackBothSides;
     PartMaxHealth=FMath::Max(1.f,Safe(PartMaxHealth,30));
