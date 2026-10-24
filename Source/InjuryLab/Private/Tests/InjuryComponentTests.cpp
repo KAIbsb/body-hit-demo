@@ -178,9 +178,9 @@ bool FInjuryUITest::RunTest(const FString&)
     TestEqual(TEXT("reset bar visible"),PartBar->GetVisibility(),ESlateVisibility::Visible);
     TestTrue(TEXT("reset part color"),PartBar->GetFillColorAndOpacity().G>0.5f && PartBar->GetFillColorAndOpacity().B>0.5f);
     TestTrue(TEXT("reset border neutral"),Torso->GetBrushColor().R<0.8f);
-    auto* HealthPanel=UI->WidgetTree->FindWidget(TEXT("HealthPanel"));
-    auto* HealthSlot=HealthPanel ? Cast<UCanvasPanelSlot>(HealthPanel->GetParent()->Slot) : nullptr;
-    TestTrue(TEXT("health UI anchored top left"),HealthSlot && HealthSlot->GetAnchors().Minimum==FVector2D::ZeroVector);
+    auto* HealthBorder=UI->WidgetTree->FindWidget(TEXT("Border_2"));
+    auto* HealthSlot=HealthBorder ? Cast<UCanvasPanelSlot>(HealthBorder->Slot) : nullptr;
+    TestTrue(TEXT("health UI anchored bottom left"),HealthSlot && HealthSlot->GetAnchors().Minimum==FVector2D(0,1));
     return true;
 }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FInjuryBlindTest,"InjuryLab.Backend.BlindnessInterfaces",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
