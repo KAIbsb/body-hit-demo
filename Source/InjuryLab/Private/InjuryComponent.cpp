@@ -148,7 +148,7 @@ bool UInjuryComponent::IsRegionInjured(EInjuryRegion Region) const
 }
 FInjuryRegionStates UInjuryComponent::GetRegionStates() const
 {
-    FInjuryRegionStates Result; Result.Head=HeadState;
+    FInjuryRegionStates Result; Result.Head=GetHeadState();
     Result.bTorsoInjured=IsRegionInjured(EInjuryRegion::Torso); Result.bLeftArmInjured=State.LeftArm(); Result.bRightArmInjured=State.RightArm();
     Result.bLeftLegInjured=State.LeftLeg(); Result.bRightLegInjured=State.RightLeg(); return Result;
 }
@@ -289,14 +289,13 @@ void UInjuryComponent::BroadcastCurrentState()
     OnInjuryModifiersChanged.Broadcast(State.Recoil(),State.ReloadDuration(),State.MoveSpeed());
     OnGameplayModifiersChanged.Broadcast(State.ReloadDuration(),State.ReloadSpeed(),State.MoveSpeed());
     OnBleedingChanged.Broadcast(State.Bleeding);
-    OnHeadConditionChanged.Broadcast(HeadState);
-    if (IsBlinded())
-    {
-        OnBlindRequested.Broadcast(HeadState,GetBlindOpacity(),GetBlindRemainingSeconds(),ActiveFadeCurve);
-        if (IsFlashed()) OnFlashRequested.Broadcast(GetBlindOpacity(),GetBlindRemainingSeconds());
-        else OnStunRequested.Broadcast(GetBlindOpacity(),GetBlindRemainingSeconds());
-    }
-    else { OnFlashEnded.Broadcast(); OnStunEnded.Broadcast(); }
+    OnHeadConditionChanged.Broadcast(GetHeadState());
+    // 逐条通道同步：进行中的补发请求，未进行中的补发结束，供刚绑定事件或刚创建的 UI 初始化。
+    const EInjuryHeadState Heads[2]={EInjuryHeadState::Flashbang,EInjuryHeadState::StunGrenade};
+    for (int I=0;I<2;++I)
+        if (BlindChannels[I].bActive) OnBlindRequested.Broadcast(Heads[I],BlindChannelOpacity(BlindChannels[I]),BlindChannelRemaining(BlindChannels[I]),BlindChannels[I].Curve);
+    if (IsFlashed()) OnFlashRequested.Broadcast(GetFlashOpacity(),GetFlashRemainingSeconds()); else OnFlashEnded.Broadcast();
+    if (IsStunned()) OnStunRequested.Broadcast(GetStunOpacity(),GetStunRemainingSeconds()); else OnStunEnded.Broadcast();
 }
 bool UInjuryComponent::EvaluateFlashExplosion(FVector ExplosionLocation, AActor* FlashActor)
 {
@@ -323,50 +322,66 @@ bool UInjuryComponent::EvaluateBlindExplosion(FVector ExplosionLocation, AActor*
     if (FlashActor) Params.AddIgnoredActor(FlashActor);
     FHitResult Obstacle;
     if (GetWorld()->LineTraceSingleByChannel(Obstacle,Eye,ExplosionLocation,ECC_Visibility,Params)) return false;
-    TriggerBlindness(Type); return IsBlinded() && HeadState==Type;
+    TriggerBlindness(Type); return BlindChannels[BlindIndex(Type)].bActive;
 }
 void UInjuryComponent::TriggerFlashForTest() { TriggerBlindness(EInjuryHeadState::Flashbang); }
 void UInjuryComponent::TriggerStunForTest() { TriggerBlindness(EInjuryHeadState::StunGrenade); }
 void UInjuryComponent::TriggerBlindness(EInjuryHeadState Type)
 {
-    if ((Type!=EInjuryHeadState::Flashbang && Type!=EInjuryHeadState::StunGrenade) || IsDead() || !GetWorld()) return;
-    const float ConfigDuration=Type==EInjuryHeadState::Flashbang ? FlashDurationSeconds : StunDurationSeconds;
+    const int32 Index=BlindIndex(Type);
+    if (Index==INDEX_NONE || IsDead() || !GetWorld()) return;
+    const float ConfigDuration=Index==0 ? FlashDurationSeconds : StunDurationSeconds;
     if (!FMath::IsFinite(ConfigDuration) || ConfigDuration<=0 || !FMath::IsFinite(BlindInitialOpacity)) return;
-    // 同种连续道具保留较长剩余时间；换种道具先发出旧类型结束事件。
-    const float Duration=FMath::Max(ConfigDuration,HeadState==Type ? GetBlindRemainingSeconds() : 0.f);
-    if (IsBlinded() && HeadState!=Type) EndFlash();
-    HeadState=Type; ActiveBlindDuration=Duration; ActiveBlindOpacity=FMath::Clamp(BlindInitialOpacity,0.f,1.f);
-    ActiveEaseExponent=FMath::IsFinite(BlindEaseOutExponent) ? FMath::Max(1.f,BlindEaseOutExponent) : 2.f;
-    ActiveFadeCurve=BlindFadeCurve;
-    GetWorld()->GetTimerManager().SetTimer(FlashTimer,this,&UInjuryComponent::EndFlash,Duration,false);
-    OnHeadConditionChanged.Broadcast(HeadState);
-    OnBlindRequested.Broadcast(Type,ActiveBlindOpacity,Duration,ActiveFadeCurve);
-    if (Type==EInjuryHeadState::Flashbang) OnFlashRequested.Broadcast(ActiveBlindOpacity,Duration);
-    else OnStunRequested.Broadcast(ActiveBlindOpacity,Duration);
+    // 同类型再次触发只覆盖自己这条通道，另一条通道继续独立衰减。
+    FInjuryBlindChannel& Channel=BlindChannels[Index];
+    Channel.Duration=ConfigDuration; Channel.InitialOpacity=FMath::Clamp(BlindInitialOpacity,0.f,1.f);
+    Channel.EaseExponent=FMath::IsFinite(BlindEaseOutExponent) ? FMath::Max(1.f,BlindEaseOutExponent) : 2.f;
+    Channel.Curve=BlindFadeCurve; Channel.bActive=true;
+    GetWorld()->GetTimerManager().SetTimer(Channel.Timer,FTimerDelegate::CreateUObject(this,&UInjuryComponent::EndBlindChannel,Type),ConfigDuration,false);
+    OnHeadConditionChanged.Broadcast(GetHeadState());
+    OnBlindRequested.Broadcast(Type,Channel.InitialOpacity,Channel.Duration,Channel.Curve);
+    if (Index==0) OnFlashRequested.Broadcast(Channel.InitialOpacity,Channel.Duration);
+    else OnStunRequested.Broadcast(Channel.InitialOpacity,Channel.Duration);
 }
-float UInjuryComponent::GetFlashRemainingSeconds() const
+int32 UInjuryComponent::BlindIndex(EInjuryHeadState Type)
 {
-    return IsFlashed() ? GetBlindRemainingSeconds() : 0.f;
+    return Type==EInjuryHeadState::Flashbang ? 0 : Type==EInjuryHeadState::StunGrenade ? 1 : INDEX_NONE;
+}
+float UInjuryComponent::BlindChannelRemaining(const FInjuryBlindChannel& Channel) const
+{
+    if (!Channel.bActive || !GetWorld()) return 0.f;
+    return FMath::Max(0.f,GetWorld()->GetTimerManager().GetTimerRemaining(Channel.Timer));
+}
+float UInjuryComponent::BlindChannelOpacity(const FInjuryBlindChannel& Channel) const
+{
+    if (!Channel.bActive || Channel.Duration<=0) return 0.f;
+    const float Progress=FMath::Clamp(1.f-BlindChannelRemaining(Channel)/Channel.Duration,0.f,1.f);
+    if (Progress>=1) return 0.f;
+    const float Weight=Channel.Curve ? Channel.Curve->GetFloatValue(Progress) : FMath::Pow(1.f-Progress,Channel.EaseExponent);
+    return Channel.InitialOpacity*(FMath::IsFinite(Weight) ? FMath::Clamp(Weight,0.f,1.f) : 0.f);
 }
 float UInjuryComponent::GetBlindRemainingSeconds() const
 {
-    return IsBlinded() && GetWorld() ? FMath::Max(0.f,GetWorld()->GetTimerManager().GetTimerRemaining(FlashTimer)) : 0.f;
+    return FMath::Max(BlindChannelRemaining(BlindChannels[0]),BlindChannelRemaining(BlindChannels[1]));
 }
 float UInjuryComponent::GetBlindOpacity() const
 {
-    if (!IsBlinded() || ActiveBlindDuration<=0) return 0;
-    const float Progress=FMath::Clamp(1.f-GetBlindRemainingSeconds()/ActiveBlindDuration,0.f,1.f);
-    if (Progress>=1) return 0;
-    const float Weight=ActiveFadeCurve ? ActiveFadeCurve->GetFloatValue(Progress) : FMath::Pow(1.f-Progress,ActiveEaseExponent);
-    return ActiveBlindOpacity*(FMath::IsFinite(Weight) ? FMath::Clamp(Weight,0.f,1.f) : 0);
+    return FMath::Max(BlindChannelOpacity(BlindChannels[0]),BlindChannelOpacity(BlindChannels[1]));
+}
+void UInjuryComponent::EndBlindChannel(EInjuryHeadState Type)
+{
+    const int32 Index=BlindIndex(Type);
+    if (Index==INDEX_NONE || !BlindChannels[Index].bActive) return;
+    FInjuryBlindChannel& Channel=BlindChannels[Index];
+    if (GetWorld()) GetWorld()->GetTimerManager().ClearTimer(Channel.Timer);
+    Channel.bActive=false; Channel.Duration=0.f; Channel.Curve=nullptr;
+    OnHeadConditionChanged.Broadcast(GetHeadState());
+    OnBlindEnded.Broadcast(Type);
+    if (Index==0) OnFlashEnded.Broadcast(); else OnStunEnded.Broadcast();
 }
 void UInjuryComponent::EndFlash()
 {
-    if (GetWorld()) GetWorld()->GetTimerManager().ClearTimer(FlashTimer);
-    if (IsBlinded())
-    {
-        const auto Old=HeadState; HeadState=EInjuryHeadState::Normal; ActiveBlindDuration=0; ActiveFadeCurve=nullptr;
-        OnHeadConditionChanged.Broadcast(HeadState); OnBlindEnded.Broadcast(Old);
-        if (Old==EInjuryHeadState::Flashbang) OnFlashEnded.Broadcast(); else OnStunEnded.Broadcast();
-    }
+    // 死亡、重置和组件销毁时两条通道一起结束。
+    EndBlindChannel(EInjuryHeadState::Flashbang);
+    EndBlindChannel(EInjuryHeadState::StunGrenade);
 }

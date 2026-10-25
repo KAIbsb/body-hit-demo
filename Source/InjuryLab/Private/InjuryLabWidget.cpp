@@ -23,8 +23,9 @@ void UInjuryLabWidget::RefreshDisplay()
     Text(TEXT("ModifierText"),FString::Printf(TEXT("后坐力 ×%.2f\n灵敏度 ×%.2f\n换弹速度 ×%.2f\n移速 ×%.2f"),InjuryComponent->GetRecoilMultiplier(),InjuryComponent->GetSensitivityMultiplier(),InjuryComponent->GetReloadSpeedMultiplier(),InjuryComponent->GetMoveSpeedMultiplier()));
     Text(TEXT("StatusText"),InjuryComponent->IsDead() ? TEXT("血量已归零") : InjuryComponent->IsBleeding() ? TEXT("躯干流血中") : TEXT("等待受击"));
     Text(TEXT("FlashText"),InjuryComponent->IsFlashed() ? FString::Printf(TEXT("白屏接口：强度 1，剩余 %.1f 秒"),InjuryComponent->GetFlashRemainingSeconds()) : TEXT("白屏接口：待触发"));
-    const auto HeadState=InjuryComponent->GetHeadState();
-    Text(TEXT("HeadStateText"),HeadState==EInjuryHeadState::Flashbang ? TEXT("头部：遭受闪光弹") : HeadState==EInjuryHeadState::StunGrenade ? TEXT("头部：遭受震撼弹") : TEXT("头部：正常"));
+    // 闪光和震撼可以同时存在，两条通道各自衰减。
+    const bool bFlash=InjuryComponent->IsFlashed(), bStun=InjuryComponent->IsStunned();
+    Text(TEXT("HeadStateText"),bFlash&&bStun ? TEXT("头部：闪光+震撼") : bFlash ? TEXT("头部：遭受闪光弹") : bStun ? TEXT("头部：遭受震撼弹") : TEXT("头部：正常"));
     if (auto* P=WidgetTree->FindWidget<UProgressBar>(TEXT("HealthBar"))) P->SetPercent(InjuryComponent->GetHealthPercent());
     const FLinearColor BarNormal=FLinearColor::FromSRGBColor(FColor(0x90,0xED,0xCD,0xFF));
     const FLinearColor BorderNormal(0.38f,0.40f,0.44f,1), Injured(0.88f,0.07f,0.07f,1);

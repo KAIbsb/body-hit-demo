@@ -46,6 +46,19 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInjuryHeadEvent, EInjuryHeadState, 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FInjuryBlindEvent, EInjuryHeadState, Type, float, InitialOpacity, float, DurationSeconds, UCurveFloat*, FadeCurve);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FInjuryGameplayModifierEvent, float, ReloadDurationMultiplier, float, ReloadSpeedMultiplier, float, MoveSpeedMultiplier);
 
+// 头部致盲按类型分两条独立通道：各自计时、曲线和透明度，可以同时生效，互不覆盖。
+USTRUCT()
+struct FInjuryBlindChannel
+{
+    GENERATED_BODY()
+    UPROPERTY() TObjectPtr<UCurveFloat> Curve = nullptr;
+    bool bActive = false;
+    float Duration = 0.f;
+    float InitialOpacity = 0.f;
+    float EaseExponent = 2.f;
+    FTimerHandle Timer;
+};
+
 UCLASS(ClassGroup=(Injury), BlueprintType, Blueprintable, meta=(BlueprintSpawnableComponent))
 class INJURYLAB_API UInjuryComponent : public UActorComponent
 {
@@ -133,12 +146,19 @@ public:
     UFUNCTION(BlueprintPure, Category="Injury|State") bool IsBodyPartInjured(EInjuryBodyPart Part) const;
     UFUNCTION(BlueprintPure, Category="Injury|State") bool IsBleeding() const { return State.Bleeding; }
     UFUNCTION(BlueprintPure, Category="Injury|State") bool IsDead() const { return State.Health <= 0; }
-    UFUNCTION(BlueprintPure, Category="Injury|State") bool IsFlashed() const { return HeadState==EInjuryHeadState::Flashbang; }
-    UFUNCTION(BlueprintPure, Category="Injury|State") bool IsBlinded() const { return HeadState!=EInjuryHeadState::Normal; }
-    UFUNCTION(BlueprintPure, Category="Injury|State") EInjuryHeadState GetHeadState() const { return HeadState; }
+    // 闪光与震撼各占一条通道，可以同时存在；同类型再次触发只覆盖自己那条。
+    UFUNCTION(BlueprintPure, Category="Injury|State") bool IsFlashed() const { return BlindChannels[0].bActive; }
+    UFUNCTION(BlueprintPure, Category="Injury|State") bool IsStunned() const { return BlindChannels[1].bActive; }
+    UFUNCTION(BlueprintPure, Category="Injury|State") bool IsBlinded() const { return IsFlashed() || IsStunned(); }
+    // 两条通道同时生效时优先报闪光；分层表现请改用 IsFlashed / IsStunned。
+    UFUNCTION(BlueprintPure, Category="Injury|State") EInjuryHeadState GetHeadState() const { return IsFlashed() ? EInjuryHeadState::Flashbang : IsStunned() ? EInjuryHeadState::StunGrenade : EInjuryHeadState::Normal; }
     UFUNCTION(BlueprintPure, Category="Injury|State") float GetBlindRemainingSeconds() const;
+    // 两条通道里较强的一条，供只需要一个总强度的调用方使用。
     UFUNCTION(BlueprintPure, Category="Injury|State") float GetBlindOpacity() const;
-    UFUNCTION(BlueprintPure, Category="Injury|State") float GetFlashRemainingSeconds() const;
+    UFUNCTION(BlueprintPure, Category="Injury|State") float GetFlashOpacity() const { return BlindChannelOpacity(BlindChannels[0]); }
+    UFUNCTION(BlueprintPure, Category="Injury|State") float GetStunOpacity() const { return BlindChannelOpacity(BlindChannels[1]); }
+    UFUNCTION(BlueprintPure, Category="Injury|State") float GetFlashRemainingSeconds() const { return BlindChannelRemaining(BlindChannels[0]); }
+    UFUNCTION(BlueprintPure, Category="Injury|State") float GetStunRemainingSeconds() const { return BlindChannelRemaining(BlindChannels[1]); }
     // 右手破坏后后坐力提高；腹部（Torso）破坏后灵敏度降低。
     UFUNCTION(BlueprintPure, Category="Injury|State") float GetRecoilMultiplier() const { return IsRegionBroken(EInjuryRegion::RightArm) ? InjuredRecoilMultiplier : 1.f; }
     UFUNCTION(BlueprintPure, Category="Injury|State") float GetSensitivityMultiplier() const { return IsRegionBroken(EInjuryRegion::Torso) ? InjuredSensitivityMultiplier : 1.f; }
@@ -152,10 +172,10 @@ protected:
     virtual void EndPlay(const EEndPlayReason::Type Reason) override;
 private:
     InjuryRules::State State;
-    FTimerHandle BleedTimer, FlashTimer;
-    EInjuryHeadState HeadState = EInjuryHeadState::Normal;
-    float ActiveBleedInterval = 0.5f, ActiveBlindDuration = 0, ActiveBlindOpacity = 0, ActiveEaseExponent = 2;
-    UPROPERTY() TObjectPtr<UCurveFloat> ActiveFadeCurve;
+    FTimerHandle BleedTimer;
+    // 下标 0 = 闪光，1 = 震撼。
+    UPROPERTY() FInjuryBlindChannel BlindChannels[2];
+    float ActiveBleedInterval = 0.5f;
     // 下标 1–6 对应 EInjuryRegion；下标 0 不使用。头部没有部位耐久。
     float PartHealth[7] = {};
     // BloodVisionLevel 是 0..1 的档位比例，乘以调用方传入的最大透明度得到最终值。
@@ -172,5 +192,9 @@ private:
     void PublishChanges(const InjuryRules::State& Old);
     void HandleBleedTick();
     void EndFlash();
+    void EndBlindChannel(EInjuryHeadState Type);
+    float BlindChannelRemaining(const FInjuryBlindChannel& Channel) const;
+    float BlindChannelOpacity(const FInjuryBlindChannel& Channel) const;
+    static int32 BlindIndex(EInjuryHeadState Type);
     UFUNCTION() void HandlePointDamage(AActor* DamagedActor, float Damage, AController* Instigator, FVector HitLocation, UPrimitiveComponent* HitComponent, FName BoneName, FVector ShotDirection, const UDamageType* DamageType, AActor* DamageCauser);
 };
